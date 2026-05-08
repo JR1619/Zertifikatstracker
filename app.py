@@ -30,7 +30,11 @@ SAMPLE_CSV = ROOT / "src" / "zerttracker" / "data" / "sample_certificates.csv"
 IS_CLOUD = str(ROOT).startswith("/mount/") or os.environ.get("STREAMLIT_RUNTIME_HOST") is not None
 
 st.title("Deutsche Bank Express-Zertifikate · Wöchentlicher Tracker")
-st.caption("Quantitative Bewertung über Monte-Carlo + Heuristik. Datenquellen: Börse Stuttgart, Yahoo Finance, ECB.")
+st.caption(
+    "Quantitative Bewertung über Monte-Carlo + Heuristik. Datenquellen: "
+    "**Watchlist (manuell)** als primäre Quelle, Yahoo Finance für Underlying-Kurse, ECB für Makro. "
+    "Zertifikate hinzufügen/bearbeiten über die Seite **„Zertifikat hinzufuegen"** (Sidebar)."
+)
 
 if LATEST_PATH.exists():
     mtime = datetime.fromtimestamp(LATEST_PATH.stat().st_mtime)
