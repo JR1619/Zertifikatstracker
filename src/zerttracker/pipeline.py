@@ -1,3 +1,9 @@
+"""Pipeline orchestration.
+
+POLICY: Dieses Projekt darf KEINE kostenpflichtigen externen Dienste nutzen.
+Erlaubt: Börse Stuttgart Public-Endpoints, yfinance (Yahoo), ECB SDW.
+Verboten: Anthropic/OpenAI, Alpha Vantage, Refinitiv, Bloomberg, alles mit API-Key/Subscription.
+"""
 from __future__ import annotations
 
 import logging
