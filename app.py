@@ -56,8 +56,8 @@ df, source_label = _load_or_run(run_now, csv_path, n_paths)
 
 if df.empty:
     st.warning(
-        "Keine Daten vorhanden. Versuche „Jetzt aktualisieren". "
-        "Wenn Börse Stuttgart blockt, lege eine Fallback-CSV unter dem angezeigten Pfad ab."
+        'Keine Daten vorhanden. Versuche "Jetzt aktualisieren". '
+        'Wenn Börse Stuttgart blockt, lege eine Fallback-CSV unter dem angezeigten Pfad ab.'
     )
     st.stop()
 
