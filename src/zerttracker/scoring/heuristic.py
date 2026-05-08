@@ -21,7 +21,7 @@ def score_risk_reward(mc: MCResult, cert: ExpressCertificate, market_price: floa
         return 0.0
 
     horizon = max(mc.expected_holding_period_years, 0.25)
-    expected_return_pa = (mc.expected_payoff / base) ** (1.0 / horizon) - 1.0
+    expected_return_pa = (mc.expected_payoff_undiscounted / base) ** (1.0 / horizon) - 1.0
     risk_penalty = mc.prob_capital_loss * mc.expected_loss_given_breach
     raw = expected_return_pa - 1.5 * risk_penalty
     return float(np.clip(50.0 + raw * 400.0, 0.0, 100.0))
@@ -73,7 +73,7 @@ def expected_return_pa(mc: MCResult, market_price: float | None, nominal: float)
     if base <= 0:
         return 0.0
     horizon = max(mc.expected_holding_period_years, 0.25)
-    return float((mc.expected_payoff / base) ** (1.0 / horizon) - 1.0)
+    return float((mc.expected_payoff_undiscounted / base) ** (1.0 / horizon) - 1.0)
 
 
 def days_until_next_observation(cert: ExpressCertificate, today: date | None = None) -> int | None:

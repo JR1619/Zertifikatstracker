@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -18,47 +19,86 @@ CACHE_DIR.mkdir(parents=True, exist_ok=True)
 LATEST_PATH = CACHE_DIR / "latest.parquet"
 SAMPLE_CSV = ROOT / "src" / "zerttracker" / "data" / "sample_certificates.csv"
 
+IS_CLOUD = str(ROOT).startswith("/mount/") or os.environ.get("STREAMLIT_RUNTIME_HOST") is not None
+
 
 st.set_page_config(page_title="DB Express-Zertifikate Tracker", layout="wide")
 st.title("Deutsche Bank Express-Zertifikate · Wöchentlicher Tracker")
 st.caption("Quantitative Bewertung über Monte-Carlo + Heuristik. Datenquellen: Börse Stuttgart, Yahoo Finance, ECB.")
 
+if LATEST_PATH.exists():
+    mtime = datetime.fromtimestamp(LATEST_PATH.stat().st_mtime)
+    age_days = (datetime.now() - mtime).days
+    badge = "🟢" if age_days < 8 else ("🟡" if age_days < 15 else "🔴")
+    st.info(f"{badge} **Datenstand:** {mtime:%d.%m.%Y %H:%M} · Updates wöchentlich (montags) per GitHub Action.")
+elif IS_CLOUD:
+    st.warning("Noch keine Daten im Repo. Wartet auf den ersten GitHub-Action-Lauf oder lade unten eine CSV hoch.")
+
 with st.sidebar:
     st.header("Steuerung")
     use_cache = st.checkbox("Letztes Ergebnis aus Cache laden", value=True)
     n_paths = st.slider("Monte-Carlo Pfade", 2000, 50000, 10000, step=2000)
-    run_now = st.button("Jetzt aktualisieren", type="primary")
+
+    if IS_CLOUD:
+        st.button("Jetzt aktualisieren", disabled=True, help="Auf Streamlit Cloud nicht verfügbar (IPs werden geblockt). Daten werden via GitHub Action wöchentlich aktualisiert.")
+        run_now = False
+    else:
+        run_now = st.button("Jetzt aktualisieren", type="primary")
+
     st.divider()
     st.caption("CSV-Fallback")
     csv_path_str = st.text_input("Pfad zur Fallback-CSV", value=str(SAMPLE_CSV))
+    uploaded = st.file_uploader("oder eigene Zertifikate-CSV hochladen", type=["csv"])
+
+    st.divider()
+    st.caption(
+        "**Methodik:** Fair Value risk-neutral (Monte-Carlo). "
+        "Erwartete Rendite & Wahrscheinlichkeiten unter physischer Drift "
+        "(Bayesian-Blend: 60% Equity-Baseline 6%, 40% 1J-Rendite Underlying)."
+    )
 
 
 @st.cache_data(show_spinner=False)
-def _load_latest(path: str) -> pd.DataFrame:
+def _load_latest(path: str, mtime: float) -> pd.DataFrame:
     p = Path(path)
     if p.exists():
         return pd.read_parquet(p)
     return pd.DataFrame()
 
 
+def _resolve_csv_path() -> Path:
+    if uploaded is not None:
+        tmp = CACHE_DIR / "uploaded_certificates.csv"
+        tmp.write_bytes(uploaded.getvalue())
+        return tmp
+    return Path(csv_path_str)
+
+
 def _load_or_run(force: bool, csv_path: Path, n_paths: int) -> tuple[pd.DataFrame, str]:
     if not force and use_cache and LATEST_PATH.exists():
-        df = _load_latest(str(LATEST_PATH))
-        return df, f"Cache ({datetime.fromtimestamp(LATEST_PATH.stat().st_mtime):%Y-%m-%d %H:%M})"
+        mtime = LATEST_PATH.stat().st_mtime
+        df = _load_latest(str(LATEST_PATH), mtime)
+        return df, f"Cache ({datetime.fromtimestamp(mtime):%Y-%m-%d %H:%M})"
     with st.spinner("Lade Zertifikate, Underlyings und Makro-Daten..."):
         df = run_weekly(csv_fallback=csv_path, output_path=LATEST_PATH, n_paths=n_paths)
     _load_latest.clear()
     return df, "frisch berechnet"
 
 
-csv_path = Path(csv_path_str)
+csv_path = _resolve_csv_path()
 df, source_label = _load_or_run(run_now, csv_path, n_paths)
 
 if df.empty:
-    st.warning(
-        'Keine Daten vorhanden. Versuche "Jetzt aktualisieren". '
-        'Wenn Börse Stuttgart blockt, lege eine Fallback-CSV unter dem angezeigten Pfad ab.'
-    )
+    if IS_CLOUD:
+        st.error(
+            "Keine Daten verfügbar. Auf Streamlit Cloud kann nicht live gescraped werden — "
+            "lass die GitHub Action laufen (Repo → Actions → 'Weekly data update' → Run workflow), "
+            "oder lade in der Seitenleiste eine eigene CSV hoch."
+        )
+    else:
+        st.warning(
+            'Keine Daten vorhanden. Klick "Jetzt aktualisieren" oder hinterlege eine Fallback-CSV.'
+        )
     st.stop()
 
 st.success(f"{len(df)} Zertifikate · Quelle: {source_label}")
@@ -66,7 +106,7 @@ st.success(f"{len(df)} Zertifikate · Quelle: {source_label}")
 col1, col2, col3, col4, col5 = st.columns(5)
 col1.metric("Score Median", f"{df['score_total'].median():.0f}")
 col2.metric("Top-Score", f"{df['score_total'].max():.0f}")
-col3.metric("Ø Erw. Rendite p.a.", f"{df['exp_return_pa'].mean()*100:.1f}%")
+col3.metric("Ø Erw. Rendite p.a. (real)", f"{df['exp_return_pa'].mean()*100:.1f}%")
 col4.metric("Ø Verlust-W'keit", f"{df['p_capital_loss'].mean()*100:.1f}%")
 col5.metric("Ø Autocall-W'keit (1. Termin)", f"{df['p_autocall_first'].mean()*100:.1f}%")
 
@@ -176,8 +216,8 @@ if sel_isin:
         st.markdown("**Bewertung**")
         st.write({
             "Marktpreis": row["market_price"],
-            "Fair Value (MC)": round(row["fair_value"], 2),
-            "Erw. Rendite p.a.": f"{row['exp_return_pa']*100:.2f}%",
+            "Fair Value (MC, risk-neutral)": round(row["fair_value"], 2),
+            "Erw. Rendite p.a. (real)": f"{row['exp_return_pa']*100:.2f}%",
             "Erw. Haltedauer": f"{row['exp_horizon_y']:.2f} J.",
             "Score Total": int(row["score_total"]),
         })

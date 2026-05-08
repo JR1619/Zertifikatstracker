@@ -9,3 +9,4 @@ beautifulsoup4>=4.12
 lxml>=5.1
 scipy>=1.11
 pydantic>=2.6
+pyarrow>=15.0

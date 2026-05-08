@@ -20,7 +20,11 @@ from zerttracker.models import (
     MacroSnapshot,
     UnderlyingMetrics,
 )
-from zerttracker.pricing.monte_carlo import MCResult, price_express
+from zerttracker.pricing.monte_carlo import (
+    MCResult,
+    estimate_physical_drift,
+    price_express,
+)
 from zerttracker.scoring.heuristic import (
     combined_score,
     expected_return_pa,
@@ -47,22 +51,29 @@ def analyze_certificate(
         logger.warning("Skipping %s: no underlying data for %s", cert.isin, cert.underlying_ticker)
         return None
 
-    mc = price_express(cert, underlying, macro, valuation_date=valuation_date, n_paths=n_paths)
+    mc_rn = price_express(cert, underlying, macro, valuation_date=valuation_date, n_paths=n_paths)
+    mu_phys = estimate_physical_drift(underlying)
+    mc_real = price_express(
+        cert, underlying, macro,
+        valuation_date=valuation_date, n_paths=n_paths,
+        physical_drift=mu_phys, seed=43,
+    )
+
     market_price = cert.mid_price
     nominal = cert.nominal
 
-    s_value = score_value(market_price, mc.fair_value, nominal)
-    s_rr = score_risk_reward(mc, cert, market_price)
+    s_value = score_value(market_price, mc_rn.fair_value, nominal)
+    s_rr = score_risk_reward(mc_real, cert, market_price)
     s_und = score_underlying(underlying)
     s_macro = score_macro(macro)
     s_total = combined_score(s_value, s_rr, s_und, s_macro)
 
     notes: list[str] = []
-    if market_price and market_price > mc.fair_value * 1.02:
+    if market_price and market_price > mc_rn.fair_value * 1.02:
         notes.append("Marktpreis > Fair Value (>2% Aufschlag)")
-    if mc.prob_capital_loss > 0.20:
+    if mc_real.prob_capital_loss > 0.20:
         notes.append("Hohe Verlustwahrscheinlichkeit (>20%)")
-    if mc.prob_autocall_first > 0.6:
+    if mc_real.prob_autocall_first > 0.6:
         notes.append("Sehr wahrscheinliche frühe Rückzahlung")
     if underlying.historical_vol_1y and underlying.historical_vol_1y > 0.40:
         notes.append("Underlying mit hoher Volatilität (>40%)")
@@ -71,15 +82,15 @@ def analyze_certificate(
         certificate=cert,
         underlying=underlying,
         macro=macro,
-        fair_value=mc.fair_value,
+        fair_value=mc_rn.fair_value,
         market_price=market_price,
-        expected_return_pa=expected_return_pa(mc, market_price, nominal),
-        expected_holding_period_years=mc.expected_holding_period_years,
-        prob_autocall_first=mc.prob_autocall_first,
-        prob_full_coupons=mc.prob_full_coupons,
-        prob_capital_loss=mc.prob_capital_loss,
-        prob_barrier_breach=mc.prob_barrier_breach,
-        expected_loss_given_breach=mc.expected_loss_given_breach,
+        expected_return_pa=expected_return_pa(mc_real, market_price, nominal),
+        expected_holding_period_years=mc_real.expected_holding_period_years,
+        prob_autocall_first=mc_real.prob_autocall_first,
+        prob_full_coupons=mc_real.prob_full_coupons,
+        prob_capital_loss=mc_real.prob_capital_loss,
+        prob_barrier_breach=mc_real.prob_barrier_breach,
+        expected_loss_given_breach=mc_real.expected_loss_given_breach,
         score_value=s_value,
         score_risk_reward=s_rr,
         score_underlying=s_und,
