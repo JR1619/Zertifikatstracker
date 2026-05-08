@@ -28,13 +28,12 @@ logger = logging.getLogger(__name__)
 
 BASE_URL = "https://www.xmarkets.db.com"
 SEARCH_PATHS = [
-    "/DE/Produktsuche/Express-Zertifikate",
-    "/DE/Anlageprodukte/Express-Zertifikate",
-    "/DE/Produktsuche?productCategory=Express",
+    "/DE/Produkt_Uebersicht/Express-Zertifikate_Klass?pstate=AllActive",
+    "/DE/Produkt_Uebersicht/Express-Zertifikate_Memory?pstate=AllActive",
+    "/DE/Produkt_Uebersicht/Zertifikate?pstate=AllActive",
 ]
 DETAIL_PATH_TEMPLATES = [
-    "/DE/Produktdetail/{isin}",
-    "/DE/Showpage.aspx?pageID=20&ISIN={isin}",
+    "/DE/Produkt_Detail/{isin}",
 ]
 
 DEFAULT_HEADERS = {
