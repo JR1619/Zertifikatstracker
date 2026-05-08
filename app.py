@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import traceback
 from datetime import datetime
 from pathlib import Path
 
@@ -9,10 +10,17 @@ ROOT = Path(__file__).parent
 sys.path.insert(0, str(ROOT / "src"))
 
 import pandas as pd
-import plotly.express as px
 import streamlit as st
 
-from zerttracker.pipeline import run_weekly
+st.set_page_config(page_title="DB Express-Zertifikate Tracker", layout="wide")
+
+try:
+    import plotly.express as px
+    from zerttracker.pipeline import run_weekly
+except Exception as exc:
+    st.error(f"Import-Fehler beim App-Start: `{type(exc).__name__}: {exc}`")
+    st.code(traceback.format_exc())
+    st.stop()
 
 CACHE_DIR = ROOT / "data" / "cache"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -21,8 +29,6 @@ SAMPLE_CSV = ROOT / "src" / "zerttracker" / "data" / "sample_certificates.csv"
 
 IS_CLOUD = str(ROOT).startswith("/mount/") or os.environ.get("STREAMLIT_RUNTIME_HOST") is not None
 
-
-st.set_page_config(page_title="DB Express-Zertifikate Tracker", layout="wide")
 st.title("Deutsche Bank Express-Zertifikate · Wöchentlicher Tracker")
 st.caption("Quantitative Bewertung über Monte-Carlo + Heuristik. Datenquellen: Börse Stuttgart, Yahoo Finance, ECB.")
 
@@ -86,7 +92,12 @@ def _load_or_run(force: bool, csv_path: Path, n_paths: int) -> tuple[pd.DataFram
 
 
 csv_path = _resolve_csv_path()
-df, source_label = _load_or_run(run_now, csv_path, n_paths)
+try:
+    df, source_label = _load_or_run(run_now, csv_path, n_paths)
+except Exception as exc:
+    st.error(f"Fehler beim Laden/Berechnen: `{type(exc).__name__}: {exc}`")
+    st.code(traceback.format_exc())
+    st.stop()
 
 if df.empty:
     if IS_CLOUD:
