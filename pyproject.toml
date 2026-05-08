@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "zerttracker"
+version = "0.1.0"
+description = "Weekly tracker and analyzer for Deutsche Bank express certificates"
+requires-python = ">=3.10"
+dependencies = [
+    "requests>=2.31",
+    "pandas>=2.1",
+    "numpy>=1.26",
+    "yfinance>=0.2.40",
+    "streamlit>=1.32",
+    "plotly>=5.20",
+    "python-dateutil>=2.9",
+    "beautifulsoup4>=4.12",
+    "lxml>=5.1",
+    "scipy>=1.11",
+    "pydantic>=2.6",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+zerttracker = ["data/*.csv"]

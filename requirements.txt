@@ -1,0 +1,11 @@
+requests>=2.31
+pandas>=2.1
+numpy>=1.26
+yfinance>=0.2.40
+streamlit>=1.32
+plotly>=5.20
+python-dateutil>=2.9
+beautifulsoup4>=4.12
+lxml>=5.1
+scipy>=1.11
+pydantic>=2.6
