@@ -309,6 +309,7 @@ _GERMAN_TICKER_HINTS = {
     "munich re": "MUV2.DE",
     "münchener rück": "MUV2.DE",
     "mercedes": "MBG.DE",
+    "daimler": "MBG.DE",
     "porsche": "P911.DE",
     "infineon": "IFX.DE",
     "deutsche telekom": "DTE.DE",

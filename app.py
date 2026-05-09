@@ -131,9 +131,9 @@ with st.expander("Filter", expanded=True):
     fc1, fc2, fc3, fc4 = st.columns(4)
     underlyings = ["alle", *sorted(df["underlying"].dropna().unique().tolist())]
     sel_underlying = fc1.selectbox("Underlying", underlyings)
-    min_score = fc2.slider("Min. Score", 0, 100, 50)
-    max_loss = fc3.slider("Max. Verlust-W'keit (%)", 0, 100, 30)
-    min_return = fc4.slider("Min. Erw. Rendite p.a. (%)", -10, 30, 0)
+    min_score = fc2.slider("Min. Score", 0, 100, 0)
+    max_loss = fc3.slider("Max. Verlust-W'keit (%)", 0, 100, 100)
+    min_return = fc4.slider("Min. Erw. Rendite p.a. (%)", -100, 30, -100)
 
 mask = (
     (df["score_total"] >= min_score)

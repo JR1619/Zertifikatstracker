@@ -4,6 +4,14 @@ on:
   schedule:
     - cron: '0 6 * * 1'
   workflow_dispatch:
+  push:
+    branches:
+      - claude/investment-analyzer-tool-BJNqP
+    paths:
+      - 'src/**'
+      - 'scripts/**'
+      - 'requirements.txt'
+      - '.github/workflows/weekly-update.yml'
 
 permissions:
   contents: write
