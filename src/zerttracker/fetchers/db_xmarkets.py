@@ -73,15 +73,25 @@ def fetch_db_xmarkets(
     session.headers.update(DEFAULT_HEADERS)
     stats = ScrapeStats()
 
-    listing_html, listing_url = _fetch_first_working(session, SEARCH_PATHS, stats)
-    if listing_html is None:
-        logger.warning("Konnte keine Listing-Seite erreichen. Stats: %s", stats)
-        return [], stats
-
-    isins = _extract_isins_from_listing(listing_html)
+    isins: list[str] = []
+    seen: set[str] = set()
+    for path in SEARCH_PATHS:
+        url = urljoin(BASE_URL, path)
+        try:
+            r = session.get(url, timeout=20, allow_redirects=True)
+        except requests.RequestException as exc:
+            logger.info("Listing %s failed: %s", url, exc)
+            continue
+        stats.listing_status = r.status_code
+        stats.listing_url = url
+        if r.status_code != 200 or len(r.text) < 1000:
+            continue
+        new = [x for x in _extract_isins_from_listing(r.text) if x not in seen]
+        for x in new:
+            seen.add(x)
+        isins.extend(new)
+        logger.info("Listing %s -> %d neue ISINs (gesamt %d)", path, len(new), len(isins))
     stats.products_found_in_listing = len(isins)
-    if verbose:
-        logger.info("Listing geladen (%s) — %d ISINs gefunden", listing_url, len(isins))
 
     if not isins:
         logger.warning("Listing erreicht (200) aber keine ISINs erkannt — Regex-Problem oder andere Seitenstruktur.")
@@ -310,6 +320,39 @@ _GERMAN_TICKER_HINTS = {
     "lufthansa": "LHA.DE",
     "fresenius": "FRE.DE",
     "henkel": "HEN3.DE",
+    "covestro": "1COV.DE",
+    "continental": "CON.DE",
+    "daimler truck": "DTG.DE",
+    "deutsche post": "DHL.DE",
+    "dhl": "DHL.DE",
+    "merck": "MRK.DE",
+    "qiagen": "QIA.DE",
+    "vonovia": "VNA.DE",
+    "deutsche boerse": "DB1.DE",
+    "deutsche börse": "DB1.DE",
+    "commerzbank": "CBK.DE",
+    "ing": "INGA.AS",
+    "bnp": "BNP.PA",
+    "santander": "SAN.MC",
+    "nestl": "NESN.SW",
+    "novartis": "NOVN.SW",
+    "roche": "ROG.SW",
+    "lvmh": "MC.PA",
+    "loreal": "OR.PA",
+    "l'oreal": "OR.PA",
+    "airbus": "AIR.PA",
+    "totalenergies": "TTE.PA",
+    "sanofi": "SAN.PA",
+    "siemens energy": "ENR.DE",
+    "siemens healthineers": "SHL.DE",
+    "deutsche wohnen": "DWNI.DE",
+    "delivery hero": "DHER.DE",
+    "zalando": "ZAL.DE",
+    "hugo boss": "BOSS.DE",
+    "thyssenkrupp": "TKA.DE",
+    "k+s": "SDF.DE",
+    "ms ci": "URTH",
+    "msci world": "URTH",
     "dax": "^GDAXI",
     "euro stoxx 50": "^STOXX50E",
     "eurostoxx 50": "^STOXX50E",

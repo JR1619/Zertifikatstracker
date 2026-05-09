@@ -54,7 +54,8 @@ def analyze_certificate(
     if underlying is None:
         underlying = underlyings.fetch_underlying(cert.underlying_ticker)
     if underlying is None:
-        logger.warning("Skipping %s: no underlying data for %s", cert.isin, cert.underlying_ticker)
+        logger.warning("Skipping %s: no underlying data for ticker=%r name=%r",
+                       cert.isin, cert.underlying_ticker, cert.underlying_name)
         return None
 
     mc_rn = price_express(cert, underlying, macro, valuation_date=valuation_date, n_paths=n_paths)
@@ -187,7 +188,7 @@ def _flatten(a: CertificateAnalysis) -> dict:
         "div_yield": a.underlying.dividend_yield,
         "market_price": a.market_price,
         "fair_value": a.fair_value,
-        "exp_return_pa": a.expected_return_pa,
+        "exp_return_pa": max(-0.99, min(5.0, a.expected_return_pa)),
         "exp_horizon_y": a.expected_holding_period_years,
         "p_autocall_first": a.prob_autocall_first,
         "p_full_coupons": a.prob_full_coupons,
