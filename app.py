@@ -169,7 +169,7 @@ fmt = {
     "fair_value": "{:.2f}",
 }
 st.dataframe(
-    filtered[display_cols].style.format(fmt),
+    filtered[display_cols].style.format(fmt, na_rep="–"),
     use_container_width=True,
     height=420,
 )
