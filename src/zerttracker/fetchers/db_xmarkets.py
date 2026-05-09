@@ -87,26 +87,6 @@ def fetch_db_xmarkets(
         logger.warning("Listing erreicht (200) aber keine ISINs erkannt — Regex-Problem oder andere Seitenstruktur.")
         return [], stats
 
-    if isins:
-        first = isins[0]
-        logger.info("=== PROBE first detail page %s ===", first)
-        try:
-            r = session.get(urljoin(BASE_URL, f"/DE/Produkt_Detail/{first}"), timeout=20)
-            logger.info("Detail status=%d len=%d", r.status_code, len(r.text))
-            if r.status_code == 200:
-                soup = BeautifulSoup(r.text, "lxml")
-                title = soup.find("title")
-                logger.info("Detail title: %s", title.get_text(strip=True) if title else "MISSING")
-                fields = _extract_column_table(soup)
-                logger.info("Stammdaten labels (%d):", len(fields))
-                for k, v in fields.items():
-                    logger.info("  %r = %r", k, v)
-                obs_rows = _extract_observation_rows(soup)
-                logger.info("Beobachtungstage rows (%d):", len(obs_rows))
-                for row in obs_rows[:8]:
-                    logger.info("  %s", row)
-        except Exception as exc:
-            logger.warning("First-detail probe crashed: %s", exc)
 
     isins = isins[:max_products]
     certs: list[ExpressCertificate] = []
@@ -233,19 +213,20 @@ def _parse_detail_html(isin: str, html: str) -> Optional[ExpressCertificate]:
     wkn = f("WKN")
     issue = _to_date(f("Emissionstag", "Erster Handelstag"))
     maturity = _to_date(f("Laufzeit", "Fälligkeit", "Letzter Bewertungstag"))
-    initial = _to_float(f("Anfänglicher Referenzpreis", "Startwert", "Erstes Fixing", "Initial"))
-    knockin = _to_pct(f("Barriere in %", "Barriere", "Sicherheitsschwelle", "Knock"))
+    initial = _to_float(f("Basisreferenzstand", "Anfänglicher Referenzpreis", "Startwert", "Erstes Fixing"))
     bid = _to_float(f("Geld", "Bid"))
     ask = _to_float(f("Brief", "Ask"))
     last = _to_float(f("Letzter Kurs", "Letzter"))
-    nominal = _to_float(f("Nominalbetrag", "Nominal")) or 1000.0
+    nominal = 100.0
 
-    observations = _observations_from_rows(_extract_observation_rows(soup))
+    observations = _observations_from_rows(_extract_observation_rows(soup), initial)
 
-    if not observations or initial is None or maturity is None or issue is None or knockin is None:
-        logger.debug("Skip %s: obs=%d init=%s issue=%s mat=%s ki=%s",
-                     isin, len(observations), initial, issue, maturity, knockin)
+    if not observations or initial is None or maturity is None or issue is None:
+        logger.debug("Skip %s: obs=%d init=%s issue=%s mat=%s",
+                     isin, len(observations), initial, issue, maturity)
         return None
+
+    knockin = observations[-1].autocall_level
 
     underlying_ticker = _guess_ticker(underlying_name)
 
@@ -275,9 +256,9 @@ def _parse_detail_html(isin: str, html: str) -> Optional[ExpressCertificate]:
         return None
 
 
-def _observations_from_rows(rows: list[list[str]]) -> list[ObservationDate]:
+def _observations_from_rows(rows: list[list[str]], initial: Optional[float]) -> list[ObservationDate]:
     out: list[ObservationDate] = []
-    if not rows:
+    if not rows or not initial or initial <= 0:
         return out
     for cells in rows[1:]:
         if len(cells) < 2:
@@ -285,21 +266,19 @@ def _observations_from_rows(rows: list[list[str]]) -> list[ObservationDate]:
         d = _to_date(cells[0])
         if d is None:
             continue
-        ac = 1.0
-        cl = 1.0
-        ca = 0.0
-        for c in cells[1:]:
-            pct = _to_pct(c)
-            if pct is not None and 0.3 <= pct <= 1.5:
-                if ac == 1.0:
-                    ac = pct
-                else:
-                    cl = pct
-                continue
-            v = _to_float(c)
-            if v is not None and v > 1.5:
-                ca = v
-        out.append(ObservationDate(date=d, autocall_level=ac, coupon_level=cl, coupon_amount=ca))
+        threshold_eur = _to_float(cells[1])
+        payout_eur = _to_float(cells[2]) if len(cells) > 2 else None
+        if threshold_eur is None:
+            continue
+        autocall_level = threshold_eur / initial
+        coupon_level = autocall_level
+        coupon_amount = (payout_eur / initial) * 100.0 if payout_eur else 0.0
+        out.append(ObservationDate(
+            date=d,
+            autocall_level=autocall_level,
+            coupon_level=coupon_level,
+            coupon_amount=coupon_amount,
+        ))
     return out
 
 
@@ -351,9 +330,10 @@ def _guess_ticker(name: str) -> str:
 def _to_float(s: Optional[str]) -> Optional[float]:
     if not s:
         return None
-    s = s.strip().replace(" ", "").replace(" ", "")
-    s = re.sub(r"[€$%]", "", s)
-    s = s.replace(".", "").replace(",", ".") if "," in s else s
+    s = re.sub(r"[€$%]|EUR|USD|CHF|GBP", "", s, flags=re.I).strip()
+    s = re.sub(r"[\s ]+", "", s)
+    if "," in s:
+        s = s.replace(".", "").replace(",", ".")
     try:
         return float(s)
     except ValueError:
