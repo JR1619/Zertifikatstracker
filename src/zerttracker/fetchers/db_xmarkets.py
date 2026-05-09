@@ -84,10 +84,29 @@ def fetch_db_xmarkets(
         logger.info("Listing geladen (%s) — %d ISINs gefunden", listing_url, len(isins))
 
     if not isins:
-        _diagnose_listing(listing_html, listing_url)
-        _probe_known_detail_page(session, "DE000DB9VKX1", stats)
-        _probe_sitemap(session, stats)
-        _probe_search_endpoints(session, stats)
+        logger.warning("Listing erreicht (200) aber keine ISINs erkannt — Regex-Problem oder andere Seitenstruktur.")
+        return [], stats
+
+    if isins:
+        first = isins[0]
+        logger.info("=== PROBE first detail page %s ===", first)
+        try:
+            r = session.get(urljoin(BASE_URL, f"/DE/Produkt_Detail/{first}"), timeout=20)
+            logger.info("Detail status=%d len=%d", r.status_code, len(r.text))
+            if r.status_code == 200:
+                soup = BeautifulSoup(r.text, "lxml")
+                title = soup.find("title")
+                logger.info("Detail title: %s", title.get_text(strip=True) if title else "MISSING")
+                for needle in ["Basiswert", "Barriere", "Beobachtungstag", "Anfänglicher Referenzpreis",
+                               "Letzter Bewertungstag", "Emissionstag", "Tilgungslevel", "Memory", first]:
+                    if needle in r.text:
+                        idx = r.text.find(needle)
+                        logger.info("  contains %r at %d: %r", needle, idx,
+                                    r.text[max(0, idx-30):idx+200])
+                    else:
+                        logger.info("  MISSING %r", needle)
+        except Exception as exc:
+            logger.warning("First-detail probe crashed: %s", exc)
 
     isins = isins[:max_products]
     certs: list[ExpressCertificate] = []
@@ -124,89 +143,8 @@ def _fetch_first_working(
     return None, None
 
 
-def _diagnose_listing(html: str, url: str) -> None:
-    logger.info("=== DIAGNOSE Listing %s ===", url)
-    logger.info("HTML length: %d chars", len(html))
-    soup = BeautifulSoup(html, "lxml")
-    title = soup.find("title")
-    logger.info("Title: %s", title.get_text(strip=True) if title else "MISSING")
-    body = soup.find("body")
-    body_text = body.get_text(" ", strip=True) if body else ""
-    logger.info("Body text first 400 chars: %r", body_text[:400])
-    scripts = soup.find_all("script")
-    logger.info("Script tags: %d (inline: %d, external: %d)",
-                len(scripts),
-                sum(1 for s in scripts if s.string),
-                sum(1 for s in scripts if s.get("src")))
-    for s in scripts[:8]:
-        if s.get("src"):
-            logger.info("  script src: %s", s["src"])
-    for needle in ["__NEXT_DATA__", "__NUXT__", "window.__INITIAL_STATE__", "window.__APOLLO_STATE__", "data-react", "ng-app", "ISIN", "DE000"]:
-        if needle in html:
-            idx = html.find(needle)
-            logger.info("Found %r at offset %d, context: %r", needle, idx, html[max(0, idx-40):idx+120])
-
-
-def _probe_known_detail_page(session: requests.Session, isin: str, stats: ScrapeStats) -> None:
-    url = urljoin(BASE_URL, f"/DE/Produkt_Detail/{isin}")
-    logger.info("=== PROBE Detail %s ===", url)
-    try:
-        r = session.get(url, timeout=20, allow_redirects=True)
-    except requests.RequestException as exc:
-        logger.info("Detail probe failed: %s", exc)
-        return
-    logger.info("Detail status=%d len=%d", r.status_code, len(r.text))
-    if r.status_code != 200:
-        logger.info("Detail body first 300 chars: %r", r.text[:300])
-        return
-    soup = BeautifulSoup(r.text, "lxml")
-    title = soup.find("title")
-    logger.info("Detail title: %s", title.get_text(strip=True) if title else "MISSING")
-    for needle in ["Basiswert", "Barriere", "Beobachtungstag", "Anfänglicher Referenzpreis", "Letzter Bewertungstag", isin]:
-        if needle in r.text:
-            idx = r.text.find(needle)
-            logger.info("  Detail contains %r at %d: %r", needle, idx, r.text[max(0, idx-30):idx+150])
-        else:
-            logger.info("  Detail MISSING %r", needle)
-
-
-def _probe_sitemap(session: requests.Session, stats: ScrapeStats) -> None:
-    for path in ["/sitemap.xml", "/DE/sitemap.xml", "/robots.txt"]:
-        url = urljoin(BASE_URL, path)
-        try:
-            r = session.get(url, timeout=10)
-        except requests.RequestException as exc:
-            logger.info("Sitemap %s failed: %s", url, exc)
-            continue
-        logger.info("Sitemap %s status=%d len=%d", url, r.status_code, len(r.text))
-        if r.status_code == 200:
-            isins = _extract_isins_from_listing(r.text)
-            logger.info("  -> %d ISINs in %s; first lines: %r", len(isins), url, r.text[:300])
-
-
-def _probe_search_endpoints(session: requests.Session, stats: ScrapeStats) -> None:
-    candidates = [
-        "/Search/?productCategory=Express-Zertifikate&pageSize=200",
-        "/api/search?productCategory=Express-Zertifikate",
-        "/DE/Suche?productCategory=Express-Zertifikate",
-        "/DE/Produkt_Uebersicht/Express-Zertifikate_Klass/data?pstate=AllActive",
-    ]
-    for path in candidates:
-        url = urljoin(BASE_URL, path)
-        try:
-            r = session.get(url, timeout=10, headers={"Accept": "application/json, text/html"})
-        except requests.RequestException as exc:
-            logger.info("Endpoint %s failed: %s", url, exc)
-            continue
-        logger.info("Endpoint %s status=%d len=%d ctype=%s",
-                    url, r.status_code, len(r.text), r.headers.get("Content-Type"))
-        if r.status_code == 200:
-            isins = _extract_isins_from_listing(r.text)
-            logger.info("  -> %d ISINs; preview: %r", len(isins), r.text[:200])
-
-
 def _extract_isins_from_listing(html: str) -> list[str]:
-    pattern = re.compile(r"\bDE000[A-Z0-9]{8}\b")
+    pattern = re.compile(r"\bDE000[A-Z0-9]{7}\b")
     seen: set[str] = set()
     out: list[str] = []
     for m in pattern.finditer(html):
