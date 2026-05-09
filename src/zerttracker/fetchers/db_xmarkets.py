@@ -283,8 +283,8 @@ def _observations_from_rows(rows: list[list[str]], initial: Optional[float]) -> 
 
 
 def _extract_title(soup: BeautifulSoup) -> Optional[str]:
-    h1 = soup.find(["h1", "h2"])
-    return h1.get_text(strip=True) if h1 else None
+    title_tag = soup.find("title")
+    return title_tag.get_text(strip=True) if title_tag else None
 
 
 _GERMAN_TICKER_HINTS = {
