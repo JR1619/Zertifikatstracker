@@ -97,14 +97,14 @@ def fetch_db_xmarkets(
                 soup = BeautifulSoup(r.text, "lxml")
                 title = soup.find("title")
                 logger.info("Detail title: %s", title.get_text(strip=True) if title else "MISSING")
-                for needle in ["Basiswert", "Barriere", "Beobachtungstag", "Anfänglicher Referenzpreis",
-                               "Letzter Bewertungstag", "Emissionstag", "Tilgungslevel", "Memory", first]:
-                    if needle in r.text:
-                        idx = r.text.find(needle)
-                        logger.info("  contains %r at %d: %r", needle, idx,
-                                    r.text[max(0, idx-30):idx+200])
-                    else:
-                        logger.info("  MISSING %r", needle)
+                fields = _extract_column_table(soup)
+                logger.info("Stammdaten labels (%d):", len(fields))
+                for k, v in fields.items():
+                    logger.info("  %r = %r", k, v)
+                obs_rows = _extract_observation_rows(soup)
+                logger.info("Beobachtungstage rows (%d):", len(obs_rows))
+                for row in obs_rows[:8]:
+                    logger.info("  %s", row)
         except Exception as exc:
             logger.warning("First-detail probe crashed: %s", exc)
 
@@ -171,43 +171,80 @@ def _fetch_detail(session: requests.Session, isin: str) -> Optional[ExpressCerti
     return None
 
 
+def _extract_column_table(soup: BeautifulSoup) -> dict[str, str]:
+    """Parse <td class="column0">Label</td><td class="column1">Value</td> pairs."""
+    out: dict[str, str] = {}
+    for label_cell in soup.select("td.column0"):
+        label = label_cell.get_text(" ", strip=True)
+        value_cell = label_cell.find_next_sibling("td")
+        value = value_cell.get_text(" ", strip=True) if value_cell else ""
+        if label and label not in out:
+            out[label] = value
+    return out
+
+
+def _extract_observation_rows(soup: BeautifulSoup) -> list[list[str]]:
+    """Find the table under <H2>Beobachtungstage</H2> and return rows as lists of strings."""
+    header = None
+    for h in soup.find_all(["h2", "H2", "h3", "h1"]):
+        if "Beobachtungstag" in h.get_text():
+            header = h
+            break
+    if header is None:
+        return []
+    container = header
+    table = None
+    for _ in range(6):
+        container = container.find_parent() or container
+        table = container.find("table")
+        if table:
+            break
+    if table is None:
+        return []
+    rows: list[list[str]] = []
+    for tr in table.find_all("tr"):
+        cells = [c.get_text(" ", strip=True) for c in tr.find_all(["td", "th"])]
+        if any(cells):
+            rows.append(cells)
+    return rows
+
+
 def _parse_detail_html(isin: str, html: str) -> Optional[ExpressCertificate]:
     soup = BeautifulSoup(html, "lxml")
+    fields = _extract_column_table(soup)
 
-    def get_field(*labels: str) -> Optional[str]:
-        for lbl in labels:
-            el = soup.find(string=re.compile(rf"\b{re.escape(lbl)}\b", re.I))
-            if not el:
-                continue
-            parent = el.find_parent(["tr", "div", "li", "dt", "th"])
-            if parent is None:
-                continue
-            sibling = parent.find_next_sibling()
-            if sibling and sibling.get_text(strip=True):
-                return sibling.get_text(strip=True)
-            cells = parent.find_all(["td", "dd", "span"])
-            for c in cells:
-                txt = c.get_text(strip=True)
-                if txt and txt != lbl:
-                    return txt
+    def f(*keys: str) -> Optional[str]:
+        for k in keys:
+            for actual_k, v in fields.items():
+                if k.lower() in actual_k.lower() and v and v != "-":
+                    return v
         return None
 
-    name = get_field("Name", "Produktname") or _extract_title(soup) or f"DB Express {isin}"
-    wkn = get_field("WKN")
-    underlying_name = get_field("Basiswert", "Underlying") or "?"
-    initial = _to_float(get_field("Anfänglicher Referenzpreis", "Startwert", "Initial Fixing"))
-    knockin = _to_pct(get_field("Barriere", "Knock-In", "Sicherheitsschwelle"))
-    issue = _to_date(get_field("Emissionstag", "Erster Handelstag", "Issue Date"))
-    maturity = _to_date(get_field("Laufzeitende", "Fälligkeit", "Maturity"))
-    bid = _to_float(get_field("Geld", "Bid"))
-    ask = _to_float(get_field("Brief", "Ask"))
-    last = _to_float(get_field("Letzter", "Last"))
-    has_memory = bool(re.search(r"memory", html, re.I))
-    nominal = _to_float(get_field("Nominalbetrag", "Nominal")) or 1000.0
+    title_text = _extract_title(soup) or ""
+    has_memory = "memory" in title_text.lower() or "memory" in html.lower()
+    name = title_text.split(" | ")[1] if " | " in title_text else (title_text or f"DB Express {isin}")
 
-    observations = _extract_observations(soup, initial)
+    underlying_name = "?"
+    m = re.search(r"Basiswert\s*\(([^)]+)\)", html)
+    if m:
+        underlying_name = m.group(1).strip()
+    underlying_name = f(*[k for k in ("Basiswert", "Underlying")]) or underlying_name
+
+    wkn = f("WKN")
+    issue = _to_date(f("Emissionstag", "Erster Handelstag"))
+    maturity = _to_date(f("Laufzeit", "Fälligkeit", "Letzter Bewertungstag"))
+    initial = _to_float(f("Anfänglicher Referenzpreis", "Startwert", "Erstes Fixing", "Initial"))
+    knockin = _to_pct(f("Barriere in %", "Barriere", "Sicherheitsschwelle", "Knock"))
+    bid = _to_float(f("Geld", "Bid"))
+    ask = _to_float(f("Brief", "Ask"))
+    last = _to_float(f("Letzter Kurs", "Letzter"))
+    nominal = _to_float(f("Nominalbetrag", "Nominal")) or 1000.0
+
+    observations = _observations_from_rows(_extract_observation_rows(soup))
 
     if not observations or initial is None or maturity is None or issue is None or knockin is None:
+        logger.debug("Skip %s: obs=%d init=%s issue=%s mat=%s ki=%s",
+                     isin, len(observations), initial, issue, maturity, knockin)
         return None
 
     underlying_ticker = _guess_ticker(underlying_name)
@@ -238,34 +275,31 @@ def _parse_detail_html(isin: str, html: str) -> Optional[ExpressCertificate]:
         return None
 
 
-def _extract_observations(soup: BeautifulSoup, initial: Optional[float]) -> list[ObservationDate]:
+def _observations_from_rows(rows: list[list[str]]) -> list[ObservationDate]:
     out: list[ObservationDate] = []
-    for table in soup.find_all("table"):
-        headers = [th.get_text(strip=True).lower() for th in table.find_all("th")]
-        if not headers or not any("beobachtung" in h or "termin" in h or "observation" in h for h in headers):
+    if not rows:
+        return out
+    for cells in rows[1:]:
+        if len(cells) < 2:
             continue
-        for row in table.find_all("tr"):
-            cells = [c.get_text(strip=True) for c in row.find_all(["td", "th"])]
-            if len(cells) < 2:
+        d = _to_date(cells[0])
+        if d is None:
+            continue
+        ac = 1.0
+        cl = 1.0
+        ca = 0.0
+        for c in cells[1:]:
+            pct = _to_pct(c)
+            if pct is not None and 0.3 <= pct <= 1.5:
+                if ac == 1.0:
+                    ac = pct
+                else:
+                    cl = pct
                 continue
-            d = _to_date(cells[0])
-            if d is None:
-                continue
-            ac = 1.0
-            cl = 1.0
-            ca = 0.0
-            for c in cells[1:]:
-                f = _to_pct(c)
-                if f is not None and 0.3 <= f <= 1.5:
-                    if ac == 1.0:
-                        ac = f
-                    else:
-                        cl = f
-                    continue
-                v = _to_float(c)
-                if v is not None and v > 1.5:
-                    ca = v
-            out.append(ObservationDate(date=d, autocall_level=ac, coupon_level=cl, coupon_amount=ca))
+            v = _to_float(c)
+            if v is not None and v > 1.5:
+                ca = v
+        out.append(ObservationDate(date=d, autocall_level=ac, coupon_level=cl, coupon_amount=ca))
     return out
 
 
