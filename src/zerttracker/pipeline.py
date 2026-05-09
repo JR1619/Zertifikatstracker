@@ -114,16 +114,35 @@ def run_weekly(
     certs: list[ExpressCertificate] = []
     source = "none"
 
-    user_certs = user_certificates.load_user_certificates()
-    if user_certs:
-        certs = user_certs
-        source = "user-watchlist"
-        logger.info("Loaded %d certificates from user watchlist", len(certs))
-    else:
-        logger.info("User watchlist empty — falling back to CSV (Issuer-Scraper aktuell nicht verfuegbar; DB blockt Bots)")
-        fetch = boerse_stuttgart.fetch_with_fallback(csv_fallback=csv_fallback)
-        certs = fetch.certificates
-        source = fetch.source
+    logger.info("Trying primary source: DB X-markets ...")
+    try:
+        xm_certs, xm_stats = db_xmarkets.fetch_db_xmarkets(max_products=200)
+        logger.info(
+            "DB X-markets stats: listing_url=%s status=%s isins_in_listing=%d details_attempted=%d details_parsed=%d errors=%d",
+            xm_stats.listing_url, xm_stats.listing_status,
+            xm_stats.products_found_in_listing, xm_stats.detail_pages_attempted,
+            xm_stats.detail_pages_parsed, len(xm_stats.parse_errors),
+        )
+        for err in xm_stats.parse_errors[:5]:
+            logger.info("  parse_error: %s", err)
+        if xm_certs:
+            certs = xm_certs
+            source = "db-xmarkets"
+    except Exception as exc:
+        logger.warning("DB X-markets crashed: %s", exc)
+
+    if not certs:
+        user_certs = user_certificates.load_user_certificates()
+        if user_certs:
+            certs = user_certs
+            source = "user-watchlist"
+            logger.info("Loaded %d certificates from user watchlist", len(certs))
+
+    if not certs and csv_fallback is not None and csv_fallback.exists():
+        logger.info("Falling back to CSV sample at %s ...", csv_fallback)
+        result = boerse_stuttgart.load_csv(csv_fallback)
+        certs = result.certificates
+        source = result.source
 
     logger.info("Fetched %d certificates from %s", len(certs), source)
 
