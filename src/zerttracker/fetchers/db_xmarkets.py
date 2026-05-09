@@ -217,9 +217,9 @@ def _parse_detail_html(isin: str, html: str) -> Optional[ExpressCertificate]:
     bid = _to_float(f("Geld", "Bid"))
     ask = _to_float(f("Brief", "Ask"))
     last = _to_float(f("Letzter Kurs", "Letzter"))
-    nominal = 100.0
 
     observations = _observations_from_rows(_extract_observation_rows(soup), initial)
+    nominal = initial if initial else 100.0
 
     if not observations or initial is None or maturity is None or issue is None:
         logger.debug("Skip %s: obs=%d init=%s issue=%s mat=%s",
@@ -272,12 +272,12 @@ def _observations_from_rows(rows: list[list[str]], initial: Optional[float]) -> 
             continue
         autocall_level = threshold_eur / initial
         coupon_level = autocall_level
-        coupon_amount = (payout_eur / initial) * 100.0 if payout_eur else 0.0
+        coupon_amount = (payout_eur - initial) if payout_eur is not None else 0.0
         out.append(ObservationDate(
             date=d,
             autocall_level=autocall_level,
             coupon_level=coupon_level,
-            coupon_amount=coupon_amount,
+            coupon_amount=max(0.0, coupon_amount),
         ))
     return out
 
