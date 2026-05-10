@@ -56,6 +56,24 @@ with st.sidebar:
         run_now = st.button("Jetzt aktualisieren", type="primary")
 
     st.divider()
+    st.caption("Score-Gewichte (live)")
+    w_value = st.slider("Value", 0.0, 1.0, 0.25, step=0.05)
+    w_ret = st.slider("Erwartete Rendite", 0.0, 1.0, 0.30, step=0.05)
+    w_risk = st.slider("Risiko (invers)", 0.0, 1.0, 0.25, step=0.05)
+    w_radj = st.slider("Risk-adjusted", 0.0, 1.0, 0.20, step=0.05)
+    w_total = w_value + w_ret + w_risk + w_radj
+    if w_total > 0:
+        weights_live = {
+            "value": w_value / w_total,
+            "expected_return": w_ret / w_total,
+            "risk": w_risk / w_total,
+            "risk_adjusted": w_radj / w_total,
+        }
+        st.caption(f"Normalisiert (Σ=1): {', '.join(f'{k}={v:.2f}' for k,v in weights_live.items())}")
+    else:
+        weights_live = None
+
+    st.divider()
     st.caption("CSV-Fallback")
     csv_path_str = st.text_input("Pfad zur Fallback-CSV", value=str(SAMPLE_CSV))
     uploaded = st.file_uploader("oder eigene Zertifikate-CSV hochladen", type=["csv"])
@@ -117,6 +135,16 @@ if df.empty:
     st.stop()
 
 st.success(f"{len(df)} Zertifikate · Quelle: {source_label}")
+
+if weights_live and {"score_value", "score_expected_return", "score_risk", "score_risk_adjusted"}.issubset(df.columns):
+    df = df.copy()
+    df["score_total"] = (
+        df["score_value"] * weights_live["value"]
+        + df["score_expected_return"] * weights_live["expected_return"]
+        + df["score_risk"] * weights_live["risk"]
+        + df["score_risk_adjusted"] * weights_live["risk_adjusted"]
+    ).clip(0, 100)
+    df = df.sort_values("score_total", ascending=False).reset_index(drop=True)
 
 col1, col2, col3, col4, col5 = st.columns(5)
 col1.metric("Score Median", f"{df['score_total'].median():.0f}")

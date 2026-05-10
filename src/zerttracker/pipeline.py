@@ -32,11 +32,16 @@ from zerttracker.pricing.monte_carlo import (
     price_express,
 )
 from zerttracker.scoring.heuristic import (
-    combined_score,
-    expected_return_pa,
     score_macro,
-    score_risk_reward,
     score_underlying,
+)
+from zerttracker.scoring.components import (
+    ScoringConfig,
+    composite,
+    expected_return_pa_from_mc,
+    score_expected_return,
+    score_risk,
+    score_risk_adjusted,
     score_value,
 )
 
@@ -49,7 +54,8 @@ def analyze_certificate(
     underlying: Optional[UnderlyingMetrics] = None,
     *,
     valuation_date: Optional[date] = None,
-    n_paths: int = 20000,
+    n_paths: int = 50000,
+    scoring_cfg: Optional[ScoringConfig] = None,
 ) -> Optional[CertificateAnalysis]:
     if underlying is None:
         underlying = underlyings.fetch_underlying(cert.underlying_ticker)
@@ -58,22 +64,34 @@ def analyze_certificate(
                        cert.isin, cert.underlying_ticker, cert.underlying_name)
         return None
 
-    mc_rn = price_express(cert, underlying, macro, valuation_date=valuation_date, n_paths=n_paths)
+    if scoring_cfg is None:
+        scoring_cfg = ScoringConfig.load()
+
+    mc_rn = price_express(
+        cert, underlying, macro, valuation_date=valuation_date, n_paths=n_paths,
+        vol_premium=scoring_cfg.vol_risk_premium,
+    )
     mu_phys = estimate_physical_drift(underlying)
     mc_real = price_express(
         cert, underlying, macro,
         valuation_date=valuation_date, n_paths=n_paths,
         physical_drift=mu_phys, seed=43,
+        vol_premium=scoring_cfg.vol_risk_premium,
     )
 
     market_price = cert.mid_price
     nominal = cert.nominal
 
-    s_value = score_value(market_price, mc_rn.fair_value, nominal)
-    s_rr = score_risk_reward(mc_real, cert, market_price)
+    exp_ret_pa = expected_return_pa_from_mc(mc_real, market_price, nominal)
+
+    s_value = score_value(market_price, mc_rn.fair_value, nominal, scoring_cfg)
+    s_exp_ret = score_expected_return(exp_ret_pa, scoring_cfg)
+    s_risk = score_risk(mc_real.prob_capital_loss, scoring_cfg)
+    s_risk_adj = score_risk_adjusted(exp_ret_pa, mc_real.cvar_95, nominal, scoring_cfg)
+    s_total = composite(s_value, s_exp_ret, s_risk, s_risk_adj, scoring_cfg)
+
     s_und = score_underlying(underlying)
     s_macro = score_macro(macro)
-    s_total = combined_score(s_value, s_rr, s_und, s_macro)
 
     notes: list[str] = []
     if market_price and market_price > mc_rn.fair_value * 1.02:
@@ -84,6 +102,10 @@ def analyze_certificate(
         notes.append("Sehr wahrscheinliche frühe Rückzahlung")
     if underlying.historical_vol_1y and underlying.historical_vol_1y > 0.40:
         notes.append("Underlying mit hoher Volatilität (>40%)")
+    if cert.is_worst_of:
+        notes.append("Worst-of Struktur — höheres Risiko")
+    if mc_rn.mc_standard_error / max(mc_rn.fair_value, 1e-6) > 0.05:
+        notes.append(f"MC-Standardfehler hoch ({mc_rn.mc_standard_error:.2f} EUR)")
 
     return CertificateAnalysis(
         certificate=cert,
@@ -91,7 +113,7 @@ def analyze_certificate(
         macro=macro,
         fair_value=mc_rn.fair_value,
         market_price=market_price,
-        expected_return_pa=expected_return_pa(mc_real, market_price, nominal),
+        expected_return_pa=exp_ret_pa,
         expected_holding_period_years=mc_real.expected_holding_period_years,
         prob_autocall_first=mc_real.prob_autocall_first,
         prob_full_coupons=mc_real.prob_full_coupons,
@@ -99,10 +121,18 @@ def analyze_certificate(
         prob_barrier_breach=mc_real.prob_barrier_breach,
         expected_loss_given_breach=mc_real.expected_loss_given_breach,
         score_value=s_value,
-        score_risk_reward=s_rr,
+        score_risk_reward=s_risk_adj,  # legacy field, jetzt risk-adjusted
         score_underlying=s_und,
         score_macro=s_macro,
         score_total=s_total,
+        score_expected_return=s_exp_ret,
+        score_risk=s_risk,
+        score_risk_adjusted=s_risk_adj,
+        cvar_95=mc_rn.cvar_95,
+        mc_standard_error=mc_rn.mc_standard_error,
+        ci_95_low=mc_rn.ci_95_low,
+        ci_95_high=mc_rn.ci_95_high,
+        sigma_used=mc_rn.sigma_used,
         notes=notes,
     )
 
@@ -110,7 +140,7 @@ def analyze_certificate(
 def run_weekly(
     csv_fallback: Optional[Path] = None,
     output_path: Optional[Path] = None,
-    n_paths: int = 20000,
+    n_paths: int = 50000,
 ) -> pd.DataFrame:
     certs: list[ExpressCertificate] = []
     source = "none"
@@ -178,24 +208,32 @@ def _flatten(a: CertificateAnalysis) -> dict:
         "ticker": a.certificate.underlying_ticker,
         "type": a.certificate.cert_type.value,
         "memory": a.certificate.has_memory,
+        "worst_of": a.certificate.is_worst_of,
         "maturity": a.certificate.maturity_date,
         "knock_in": a.certificate.knock_in_barrier,
         "spot": a.underlying.spot,
         "initial_fixing": a.certificate.initial_fixing,
         "barrier_distance_pct": (a.underlying.spot / (a.certificate.knock_in_barrier * a.certificate.initial_fixing) - 1.0),
         "vol_1y": a.underlying.historical_vol_1y,
+        "sigma_used": a.sigma_used,
         "pe": a.underlying.pe_ratio,
         "div_yield": a.underlying.dividend_yield,
         "market_price": a.market_price,
         "fair_value": a.fair_value,
-        "exp_return_pa": max(-0.99, min(5.0, a.expected_return_pa)),
+        "fair_value_ci_low": a.ci_95_low,
+        "fair_value_ci_high": a.ci_95_high,
+        "mc_se": a.mc_standard_error,
+        "cvar_95": a.cvar_95,
+        "exp_return_pa": a.expected_return_pa,
         "exp_horizon_y": a.expected_holding_period_years,
         "p_autocall_first": a.prob_autocall_first,
         "p_full_coupons": a.prob_full_coupons,
         "p_capital_loss": a.prob_capital_loss,
         "p_barrier_breach": a.prob_barrier_breach,
         "score_value": a.score_value,
-        "score_risk_reward": a.score_risk_reward,
+        "score_expected_return": a.score_expected_return,
+        "score_risk": a.score_risk,
+        "score_risk_adjusted": a.score_risk_adjusted,
         "score_underlying": a.score_underlying,
         "score_macro": a.score_macro,
         "score_total": a.score_total,

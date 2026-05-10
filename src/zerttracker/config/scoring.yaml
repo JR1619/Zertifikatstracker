@@ -1,0 +1,32 @@
+# Scoring-Konfiguration. Aenderungen wirken sich beim naechsten Pipeline-Lauf
+# (oder Streamlit-Refresh) aus.
+#
+# Jede Komponente hat eine "bad" Schwelle (-> Score 0) und eine "good"
+# Schwelle (-> Score 100). Linear-clipped dazwischen.
+# "invert: true" wenn niedrige Werte besser sind (z.B. Verlustwahrscheinlichkeit).
+
+weights:
+  value: 0.25
+  expected_return: 0.30
+  risk: 0.25
+  risk_adjusted: 0.20
+
+vol_risk_premium: 0.03  # konstanter Aufschlag auf realized vol
+
+thresholds:
+  value_ratio:           # fair_value / max(market_price, nominal)
+    bad: 0.95
+    good: 1.10
+    invert: false
+  expected_return_pa:    # in Dezimal (0.05 = 5%)
+    bad: -0.02
+    good: 0.08
+    invert: false
+  prob_capital_loss:     # 0..1
+    bad: 0.70
+    good: 0.10
+    invert: true
+  risk_adjusted_return:  # exp_return_pa / max(0.01, |1 - cvar_95/nominal|)
+    bad: -0.30
+    good: 0.50
+    invert: false

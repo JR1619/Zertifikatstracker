@@ -46,6 +46,7 @@ class ExpressCertificate(BaseModel):
     last: Optional[float] = None
 
     has_memory: bool = False
+    is_worst_of: bool = False
 
     @field_validator("knock_in_barrier")
     @classmethod
@@ -106,5 +107,14 @@ class CertificateAnalysis(BaseModel):
     score_underlying: float
     score_macro: float
     score_total: float
+
+    score_expected_return: float = 0.0
+    score_risk: float = 0.0
+    score_risk_adjusted: float = 0.0
+    cvar_95: float = 0.0
+    mc_standard_error: float = 0.0
+    ci_95_low: float = 0.0
+    ci_95_high: float = 0.0
+    sigma_used: float = 0.0
 
     notes: list[str] = Field(default_factory=list)

@@ -240,6 +240,8 @@ def _parse_detail_html(isin: str, html: str) -> Optional[ExpressCertificate]:
 
     underlying_ticker = _guess_ticker(underlying_name)
 
+    is_worst_of = _detect_worst_of(title_text, underlying_name, html)
+
     try:
         return ExpressCertificate(
             isin=isin,
@@ -260,6 +262,7 @@ def _parse_detail_html(isin: str, html: str) -> Optional[ExpressCertificate]:
             ask=ask,
             last=last,
             has_memory=has_memory,
+            is_worst_of=is_worst_of,
         )
     except Exception as exc:
         logger.debug("Validation failed for %s: %s", isin, exc)
@@ -290,6 +293,25 @@ def _observations_from_rows(rows: list[list[str]], initial: Optional[float]) -> 
             coupon_amount=max(0.0, coupon_amount),
         ))
     return out
+
+
+_WORST_OF_KEYWORDS = (
+    "multi-aktie", "multi aktie", "multiaktie",
+    "worst of", "worst-of", "worstof",
+    "duo", "trio", "korb",
+    "basket",
+)
+
+
+def _detect_worst_of(title: str, underlying_name: str, html: str) -> bool:
+    haystack = f"{title} {underlying_name}".lower()
+    if any(k in haystack for k in _WORST_OF_KEYWORDS):
+        return True
+    isin_pattern = re.compile(r"\bDE000[A-Z0-9]{7}\b|\b[A-Z]{2}\d{10}\b")
+    refs = set(re.findall(r"Basiswert\s*\(([A-Z0-9]{12})\)", html))
+    if len(refs) >= 2:
+        return True
+    return False
 
 
 def _extract_title(soup: BeautifulSoup) -> Optional[str]:

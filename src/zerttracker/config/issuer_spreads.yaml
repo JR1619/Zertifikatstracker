@@ -1,0 +1,34 @@
+# Issuer-Spreads in Basispunkten ueber Euro-Swap.
+# Manuell zu pflegen (quartalsweise). Approximation auf Rating-Niveau.
+# Quelle: 5Y Senior Unsecured CDS-Spreads (Markit, Bloomberg) -- letzte oeffentliche Schaetzung.
+
+"Deutsche Bank":
+  rating: "A-"
+  spread_bp: 70
+  as_of: "2026-05-01"
+  note: "5Y senior, post-2024 Rating-Upgrade; vor 2024 ~120bp"
+
+"Goldman Sachs":
+  rating: "BBB+"
+  spread_bp: 80
+  as_of: "2026-05-01"
+
+"BNP Paribas":
+  rating: "A+"
+  spread_bp: 50
+  as_of: "2026-05-01"
+
+"UniCredit":
+  rating: "BBB"
+  spread_bp: 110
+  as_of: "2026-05-01"
+
+"HVB":
+  rating: "A-"
+  spread_bp: 70
+  as_of: "2026-05-01"
+
+# Default fuer unbekannte Emittenten:
+"_default":
+  rating: "BBB"
+  spread_bp: 100
