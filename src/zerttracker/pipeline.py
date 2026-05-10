@@ -14,6 +14,7 @@ from typing import Iterable, Optional
 import pandas as pd
 
 from zerttracker.fetchers import (
+    boerse_frankfurt,
     boerse_stuttgart,
     db_xmarkets,
     macro as macro_fetch,
@@ -176,6 +177,25 @@ def run_weekly(
         source = result.source
 
     logger.info("Fetched %d certificates from %s", len(certs), source)
+
+    if certs:
+        try:
+            quotes = boerse_frankfurt.fetch_quotes([c.isin for c in certs])
+            hits = 0
+            for c in certs:
+                q = quotes.get(c.isin)
+                if q is None:
+                    continue
+                if q.bid is not None:
+                    c.bid = q.bid
+                if q.ask is not None:
+                    c.ask = q.ask
+                if q.last is not None:
+                    c.last = q.last
+                hits += 1
+            logger.info("Boerse Frankfurt quotes: %d/%d ISINs angereichert", hits, len(certs))
+        except Exception as exc:
+            logger.warning("Boerse Frankfurt enrichment failed: %s", exc)
 
     macro = macro_fetch.fetch_macro()
     logger.info("Macro snapshot: %s", macro.model_dump())
