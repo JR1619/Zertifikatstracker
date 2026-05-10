@@ -62,17 +62,20 @@ def _signed_headers(url: str) -> dict:
     }
 
 
-def _try_get(session: requests.Session, url: str, *, with_signing: bool) -> Optional[dict]:
+def _try_get(session: requests.Session, url: str, *, with_signing: bool, verbose: bool = False) -> Optional[dict]:
     headers = dict(DEFAULT_HEADERS)
     if with_signing:
         headers.update(_signed_headers(url))
     try:
         r = session.get(url, headers=headers, timeout=10)
     except requests.RequestException as exc:
-        logger.debug("BF GET %s failed: %s", url, exc)
+        logger.info("BF GET %s failed: %s", url, exc)
         return None
+    if verbose:
+        logger.info("BF GET %s -> %d (signing=%s, len=%d)", url, r.status_code, with_signing, len(r.text))
+        if r.status_code != 200 or len(r.text) < 1000:
+            logger.info("  body: %r", r.text[:300])
     if r.status_code != 200:
-        logger.debug("BF GET %s -> %d", url, r.status_code)
         return None
     try:
         return r.json()
@@ -80,23 +83,39 @@ def _try_get(session: requests.Session, url: str, *, with_signing: bool) -> Opti
         return None
 
 
-def fetch_quote(isin: str, *, session: Optional[requests.Session] = None) -> Optional[Quote]:
+def fetch_quote(isin: str, *, session: Optional[requests.Session] = None, verbose: bool = False) -> Optional[Quote]:
     """Holt Last/Bid/Ask fuer eine ISIN. None wenn nicht verfuegbar."""
     if session is None:
         session = requests.Session()
-    url = f"{BASE_URL}/price_information?isin={isin}&mic=XFRA"
-
-    data = _try_get(session, url, with_signing=False)
-    if data is None:
-        data = _try_get(session, url, with_signing=True)
+    candidates = [
+        f"{BASE_URL}/price_information?isin={isin}&mic=XFRA",
+        f"{BASE_URL}/data_sheet_header?isin={isin}&mic=XFRA",
+        f"{BASE_URL}/quote_box?isin={isin}",
+        f"{BASE_URL}/quote_box/single?isin={isin}",
+        f"{BASE_URL}/bid_ask_overview?isin={isin}",
+    ]
+    data = None
+    for url in candidates:
+        data = _try_get(session, url, with_signing=False, verbose=verbose)
+        if data:
+            if verbose:
+                logger.info("BF success unauthenticated: %s -> keys=%s", url, list(data.keys())[:10])
+            break
+        data = _try_get(session, url, with_signing=True, verbose=verbose)
+        if data:
+            if verbose:
+                logger.info("BF success signed: %s -> keys=%s", url, list(data.keys())[:10])
+            break
     if data is None:
         return None
 
-    last = _safe_float(data.get("lastPrice"))
-    bid = _safe_float(data.get("bidPrice")) or _safe_float(data.get("bid"))
-    ask = _safe_float(data.get("askPrice")) or _safe_float(data.get("ask"))
+    last = _safe_float(data.get("lastPrice")) or _safe_float(data.get("last"))
+    bid = _safe_float(data.get("bidPrice")) or _safe_float(data.get("bid")) or _safe_float(data.get("bidLimit"))
+    ask = _safe_float(data.get("askPrice")) or _safe_float(data.get("ask")) or _safe_float(data.get("askLimit"))
     ts = data.get("timestampLastPrice") or data.get("timestamp")
     if last is None and bid is None and ask is None:
+        if verbose:
+            logger.info("BF data has no last/bid/ask. keys=%s", list(data.keys()))
         return None
     return Quote(isin=isin, last=last, bid=bid, ask=ask, timestamp=ts)
 
@@ -104,8 +123,9 @@ def fetch_quote(isin: str, *, session: Optional[requests.Session] = None) -> Opt
 def fetch_quotes(isins: list[str]) -> dict[str, Quote]:
     session = requests.Session()
     out: dict[str, Quote] = {}
-    for isin in isins:
-        q = fetch_quote(isin, session=session)
+    for i, isin in enumerate(isins):
+        verbose = (i == 0)
+        q = fetch_quote(isin, session=session, verbose=verbose)
         if q is not None:
             out[isin] = q
     return out
